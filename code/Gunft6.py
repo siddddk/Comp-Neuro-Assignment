@@ -26,13 +26,15 @@ Note 2: Periodic thalamic input is not yet implemented.
    can recieve external noise.
 
 '''
-from brian import *
-from statlib import stats as st
-import pylab
-##import matplotlib.pyplot as plt
+from brian2 import *
+from brian2.input import PoissonThreshold
+
 from math import *
 from sys import *
-#import numpy
+import numpy as np
+import matplotlib.pyplot as plt
+import statistics as st  # Assuming you have already imported the 'statistics' module
+
 
 
 #General parameters
@@ -104,11 +106,14 @@ R_B = Rho_Cytoplasm*(Length_Dendrite/2)/(pi*Radius_Dendrite**2)
 R_C = Rho_Extracellular*(Length_Dendrite/2)/Area_Extracellular
 R_D = Rho_Extracellular*(Length_Dendrite/2)/Area_Extracellular
 R_M = Rho_Membrane_Hillock/Area_Axon_Hillock
-print "R_A", R_A
-print "R_B", R_B
-print "R_C", R_C
-print "R_D", R_D
-print "R_M", R_M
+# Print the calculated resistances and areas for verification
+print("Area_Axon_Hillock:", Area_Axon_Hillock)
+print("Area_Extracellular:", Area_Extracellular)
+print("R_A:", R_A)
+print("R_B:", R_B)
+print("R_C:", R_C)
+print("R_D:", R_D)
+print("R_M:", R_M)
 
 
 
@@ -203,129 +208,80 @@ OU = NeuronGroup(1, model=OU_Periodic)
 # Second level noise
 # Run N_Neurons realisations of inhomogenous Poisson process with rate, rate(t) given
 # by the Ornstein_Uhlenbeck process.
-Thalamic_IP = NeuronGroup(Number_Of_ThalamicNeurons, model='P : Hz', threshold=PoissonThreshold(state='P')) # inhomogenous Poisson
+Thalamic_IP = NeuronGroup(Number_Of_ThalamicNeurons, model='P : Hz', threshold=PoissonThreshold(state='P'))
 #  IP.P = rand(N_Neurons) no need for this...
 Thalamic_IP.P = linked_var(OU, 'rate')
 
 
 
+#define network connections and weights
+Wii = (tau_mI * J_GABA_I) / tau_rG_I
+Cii = Synapses(Gi, Gi, model='XG', on_pre='XG += Wii', delay=tau_IL)
+Cii.connect(p=0.2)
 
-#------------------ Define Network Connections and Weights -----------------
-# Cortical Connections
-# Note we make conversion from mazzoni to Peters model according to:
-# J_{i,j}= w_{i,j}*v, where v=1mV and w_{i,j} is the true weight
-# Example: J_GABA_I = w_{i,j}*v
+Wei = (tau_mI * J_AMPA_I) / tau_rA_I
+Cei = Synapses(Ge, Gi, model='XA', on_pre='XA += Wei', delay=tau_EL)
+Cei.connect(p=0.2)
 
-#------ Inhibitory neurons recieving inputs ---------
+Wie = (tau_mE * J_GABA_E) / tau_rG_E
+Cie = Synapses(Gi, Ge, model='XG', on_pre='XG += Wie', delay=tau_IL)
+Cie.connect(p=0.2)
 
+Wee = (tau_mE * J_AMPA_E) / tau_rA_E
+Cee = Synapses(Ge, Ge, model='XA', on_pre='XA += Wee', delay=tau_EL)
+Cee.connect(p=0.2)
 
-Wii = (tau_mI*J_GABA_I)/tau_rG_I # Synaptic Weight
-Cii = Connection(Gi, Gi, 'XG', sparseness=0.2, weight=Wii, delay=tau_IL) # Inhibiotry-Inhibitory
+Wti = (tau_mI * J_Ext_I) / tau_rA_I
+Cti = Synapses(Thalamic_IP, Gi, model='XA', on_pre='XA += Wti', delay=tau_TL)
+Cti.connect(p='i >= N_Excitatory', skip_if_invalid=True)
 
-Wei = (tau_mI*J_AMPA_I)/tau_rA_I # Synaptic weight
-Cei = Connection(Ge, Gi, 'XA', sparseness=0.2, weight=Wei, delay=tau_EL) # Excitatory-Inhibitory
+Wte = (tau_mE * J_Ext_E) / tau_rA_E
+Cte = Synapses(Thalamic_IP, Ge, model='XA', on_pre='XA += Wte', delay=tau_TL)
+Cte.connect(p='i < N_Excitatory', skip_if_invalid=True)
 
+alpha_list = [0.32 * 1e-9] * N_Excitatory
+gI_list = [0] * N_Excitatory
+gE_list = [0] * N_Excitatory
 
-#------ Excitatory neurons recieving inputs --------
-Wie = (tau_mE*J_GABA_E)/tau_rG_E # Synaptic Weight
-Cie = Connection(Gi, Ge, 'XG', sparseness=0.2, weight=Wie, delay=tau_IL) # Inhibitory-Excitatory
-
-Wee = (tau_mE*J_AMPA_E)/tau_rA_E # synaptic Weight
-Cee = Connection(Ge, Ge, 'XA', sparseness=0.2, weight=Wee, delay=tau_EL) # Excitatory-Excitatory
-
-
-#------------------ Define External Thalamic Input -----------------
-# External Thalamic Input
-Wti = (tau_mI*J_Ext_I)/tau_rA_I # synaptic Weight
-Cti = Connection(Thalamic_IP, Gi, 'XA', delay=tau_TL) # Thalamic-Inhibitory
-Cti.connect_one_to_one(Thalamic_IP[N_Excitatory:Number_Of_ThalamicNeurons], Gi, weight=Wti)
-
-
-Wte = (tau_mE*J_Ext_E)/tau_rA_E # synaptic Weight
-Cte = Connection(Thalamic_IP, Ge, 'XA',delay=tau_TL) # Thalamic-Exictatory
-Cte.connect_one_to_one(Thalamic_IP[0:N_Excitatory], Ge, weight=Wte) 
-
-#---------------------------------------------------------------------------------
-
-
-
-
-
-
-
-alpha_list=[0.32*1e-9]*len(Ge) 
-gI_list = [0]*len(Ge)
-gE_list = [0]*len(Ge)
-for i in range(len(Ge)):
-  for j in range(len(Ge)):
-    if Cee[j,i] != 0 :
-       alpha_list[i] = alpha_list[i] + 0.25*1e-9 # 0.25*nS + 0.32*nS (cortical + thalamic)
-#    print "Cee[j, i]", Cee[j, i]
-       
-  for k in range(len(Gi)):
-     if Cie[k,i] !=0:
-       gI_list[i] = gI_list[i] + 1*1e-9 # gaba = 1nS
+for i in range(N_Excitatory):
+    for j in range(N_Excitatory):
+        if Cee.is_connected(j, i):
+            alpha_list[i] = alpha_list[i] + 0.25 * 1e-9  # 0.25*nS + 0.32*nS (cortical + thalamic)
+    for k in range(N_Interneurons):
+        if Cie.is_connected(k, i):
+            gI_list[i] = gI_list[i] + 1 * 1e-9  # gaba = 1nS
 
 
 
 # Evaluate other parameters
-for i in range(len(Ge)):
-   gE_list[i] = alpha_list[i]/(1 - (R_A +  R_D)*alpha_list[i])
+gE_list = [alpha_list[i] / (1 - (R_A + R_D) * alpha_list[i]) for i in range(N_Excitatory)]
    
 
 
 
 
-We_tilda = [0]*len(Ge)
-Wi_tilda = [0]*len(Ge)
-for i in range(len(Ge)):
-    Beta_tau_i = gE_list[i]*(R_B + R_C)/(r_i*(1 + gE_list[i]*(R_A+R_D) + (R_B+R_C)*(gE_list[i] - gI_list[i]*(1 + gE_list[i]*(R_A+R_D)))))
-    gamma_i =  (gE_list[i]*(R_M + R_B + R_C))/(R_M*(1 + gE_list[i]*(R_A + R_D)))
-##    We_tilda[i] = R_D*(J_AMPA_E/mV)*(1/r_i - Beta_tau_i)
-##    Wi_tilda[i] = R_D*(J_GABA_E/mV)*Beta_tau_i
-    We_tilda[i] = R_D*(J_AMPA_E)*(1/r_i - Beta_tau_i)
-    Wi_tilda[i] = R_D*(J_GABA_E)*Beta_tau_i
-    Ge[i].PSI = R_D*(Beta_tau_i - gamma_i)
-    if i==1:
-      print "Beta over tau 0:", Beta_tau_i
-      print "gamma_0:", gamma_i
-      print "We_tilda[0]:", We_tilda[0] 
-      print "Wi_tilda[0]:", Wi_tilda[0]
-      print "PSI", Ge[0].PSI
-
-
+We_tilda = [R_D * (J_AMPA_E) * (1 / r_i - gE_list[i] * (R_B + R_C) / (r_i * (1 + gE_list[i] * (R_A + R_D) + (R_B + R_C) * (gE_list[i] - gI_list[i] * (1 + gE_list[i] * (R_A + R_D)))))) for i in range(N_Excitatory)]
+Wi_tilda = [R_D * (J_GABA_E) * (gE_list[i] * (R_B + R_C) / (r_i * (1 + gE_list[i] * (R_A + R_D) + (R_B + R_C) * (gE_list[i] - gI_list[i] * (1 + gE_list[i] * (R_A + R_D)))))) for i in range(N_Excitatory)]
 
 #------ Now establish connections with \tilda{w}------
 # Inhibitory-Excitatory
-Cie2 = Connection(Gi, Ge, 'XG2', delay=tau_IL) 
+Cie2 = Synapses(Gi, Ge, model='XG2', on_pre='XG2 += Wi_tilda[j]', delay=tau_IL)
+for i in range(N_Excitatory):
+    for j in range(N_Interneurons):
+        if Cie.is_connected(j, i):
+            Cie2.connect(j=j, i=i)
+            
+Cee2 = Synapses(Ge, Ge, model='XA2', on_pre='XA2 += We_tilda[j]', delay=tau_EL)
+for i in range(N_Excitatory):
+    for j in range(N_Excitatory):
+        if Cee.is_connected(j, i):
+            Cee2.connect(j=j, i=i)
 
-for i in range(len(Ge)):
-   for j in range(len(Gi)):
-     if Cie[j, i] != 0:
-        Cie2[j, i] =  (tau_mE*Wi_tilda[j])/tau_rG_E
-
-print "Wie:", (tau_mE*J_GABA_E)/tau_rG_E
-print "Cie2[0, i]", (tau_mE*Wi_tilda[0])/tau_rG_E
-
-# Excitatory-Excitatory
-Cee2 = Connection(Ge, Ge, 'XA2', delay=tau_EL) 
-
-for i in range(len(Ge)):
-   for j in range(len(Ge)):
-     if Cee[j, i] != 0:
-        Cee2[j, i] = (tau_mE*We_tilda[j])/tau_rA_E
-
-
-print "Wee:", (tau_mE*J_AMPA_E)/tau_rA_E 
-print "Cee2[0, i]", (tau_mE*We_tilda[0])/tau_rA_E
-
-
-# Thalamic-Exictatory
-Cte2 = Connection(Thalamic_IP, Ge, 'XA2',delay=tau_TL)
-Cte2.connect_one_to_one(Thalamic_IP[0:N_Excitatory], Ge, weight=Wte)
-for i in range(len(Ge)):
-   for j in range(len(Thalamic_IP[0:N_Excitatory])):
-        Cte2[j, i] = (tau_mE*We_tilda[j])/tau_rA_E
+Cte2 = Synapses(Thalamic_IP, Ge, model='XA2', on_pre='XA2 += We_tilda[j]', delay=tau_TL)
+for i in range(N_Excitatory):
+    for j in range(N_Excitatory):
+        if Cte.is_connected(j, i):
+            Cte2.connect(j=j, i=i)
 
 
 #-------------------------------------------------------------------
@@ -334,54 +290,25 @@ for i in range(len(Ge)):
 
 
 
-#--------------------------------Running and Printing ----------------------------------------------------------
-# We do an initial run to settle behaviour before recording
+# Run the initial setup to settle behavior
 run(setup_duration)
 
-
-#------------------ Setup the main Observables --------------------------
-'''
-Set up some monitors as usual. The line ``record=0`` in the :class:`StateMonitor`
-declarations indicates that we only want to record the activity of
-neuron 0. This saves time and memory.
-'''
+# Set up monitors
 ThalamicRate = StateMonitor(Thalamic_IP, 'P', record=0, timestep=10)
-TS = SpikeMonitor(Thalamic_IP) # Thalamic Spikes
-
-# Record Spikes
+TS = SpikeMonitor(Thalamic_IP)
 Ge_S = SpikeMonitor(Ge[0:200])
 Gi_S = SpikeMonitor(Gi[0:200])
-
-# Record every neurons LFPs and DFPs
-
-##LFP_e = StateMonitor(Ge, 'LFP', record=True)
-##DFP_e = StateMonitor(Ge, 'DFP', record=True)
-##IA2_e = StateMonitor(Ge,'IA2', record=True)
-##IG2_e = StateMonitor(Ge,'IG2', record=True)
-##IA_e = StateMonitor(Ge,'IA', record=True)
-##IG_e = StateMonitor(Ge,'IG', record=True)
-##Membrane = StateMonitor(Ge,'V', record=True)
-
-
 LFP_e = StateMonitor(Ge, 'LFP', timestep=10)
 DFP_e = StateMonitor(Ge, 'DFP', timestep=10)
-IA2_e = StateMonitor(Ge,'IA2', timestep=10)
-IG2_e = StateMonitor(Ge,'IG2', timestep=10)
-IA_e = StateMonitor(Ge,'IA', timestep=10)
-IG_e = StateMonitor(Ge,'IG', timestep=10)
-Membrane = StateMonitor(Ge,'V', timestep=10)
+IA2_e = StateMonitor(Ge, 'IA2', timestep=10)
+IG2_e = StateMonitor(Ge, 'IG2', timestep=10)
+IA_e = StateMonitor(Ge, 'IA', timestep=10)
+IG_e = StateMonitor(Ge, 'IG', timestep=10)
+Membrane = StateMonitor(Ge, 'V', timestep=10)
+rate_i = PopulationRateMonitor(Gi, bin=1 * ms)
+rate_e = PopulationRateMonitor(Ge, bin=1 * ms)
 
-
-
-# Record the population rate/so we can compare with LFP
-rate_i = PopulationRateMonitor(Gi, bin=1*ms)
-rate_e = PopulationRateMonitor(Ge, bin=1*ms)
-
-
-
-'''
-Now we run.
-'''
+# Run the main simulation
 run(duration)
 '''
 
@@ -397,141 +324,153 @@ for an explanation of the plotting functions, but note that the
 :func:`raster_plot` not to create a new figure (so that it can be placed
 as a subplot of a larger figure). 
 '''
-
-
 # Constant input signal rate
-signal = ones(len(ThalamicRate[0])) * v_0
+signal = np.ones(len(ThalamicRate[0])) * v_0
 
-
+# Compute total LFP
 total_LFP = []
 mean_LFP = []
-for lfp in xrange(len(LFP_e.times)):
-    total_LFP.append(sum(LFP_e[:,lfp]))
-    mean_LFP.append(float(sum(LFP_e[:,lfp]))/ N_Excitatory)
+for lfp in range(len(LFP_e.times)):
+    total_LFP.append(np.sum(LFP_e[:, lfp]))
+    mean_LFP.append(np.mean(LFP_e[:, lfp]))
 
+# Convert LFP to millivolts
+total_LFP = np.array(total_LFP) * 1e3
+mean_LFP = np.array(mean_LFP) * 1e3
 
-
+# Compute total DFP
 total_DFP = []
 mean_DFP = []
-# mean2_DFP = []
-for dfp in xrange(len(DFP_e.times)):
-    total_DFP.append(sum(DFP_e[:,dfp]))
-    mean_DFP.append(float(sum(DFP_e[:,dfp]))/N_Excitatory)
-#     mean2_DFP.append(st.mean(DFP_e[:,dfp]))
+for dfp in range(len(DFP_e.times)):
+    total_DFP.append(np.sum(DFP_e[:, dfp]))
+    mean_DFP.append(np.mean(DFP_e[:, dfp]))
 
+# Convert DFP to millivolts
+total_DFP = np.array(total_DFP) * 1e3
+mean_DFP = np.array(mean_DFP) * 1e3
 
-
-# Mean membrane
-mean_membrane = []
-for i_v in xrange(len(Membrane.times)):
-    mean_membrane.append(st.mean(Membrane[:,i_v]))
-
-
-# Convert volt to mili-volt
-mean_membrane[:] = [x*1e3 for x in mean_membrane]
-#total_LFP[:] = [x*1e3 for x in total_LFP]
-mean_LFP[:] = [x*1e3 for x in mean_LFP]
-#total_DFP[:] = [x*1e3 for x in total_DFP]
-mean_DFP[:] = [x*1e3 for x in mean_DFP]
-
-
-#------------------- Various Plots --------------------- 
-pylab.figure(1)
-#pylab.yticks((0,0.5, 1))
-plot(ThalamicRate.times/ms, ThalamicRate[0]/1000, 'k')
-pylab.plot(ThalamicRate.times/ms, signal/1000, 'g')
-filename="ThalamicRate_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
-
-pylab.figure(2)
-#pylab.yticks((0,0.5, 1))
-raster_plot(Ge_S)
-filename="Excitatory_RasterPlot_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
-
-pylab.figure(3)
-#pylab.yticks((0,0.5, 1))
-pylab.plot(rate_e.times / ms, rate_e.rate, 'b')
-filename="Excitatory_rate_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
-
-pylab.figure(4)
-#pylab.yticks((0,0.5, 1))
-pylab.plot(rate_i.times / ms, rate_i.rate, 'r')
-filename="Inhibitory_rate_" + `v_0` + ".eps"             
-pylab.savefig(filename, format='eps')
-
-pylab.figure(5)
-#pylab.yticks((0,0.5, 1))
-pylab.plot(Membrane.times / ms, mean_membrane, 'g')
-filename="mean_membrane_" + `v_0` + ".eps"     
-pylab.savefig(filename, format='eps')
-
-pylab.figure(6)
-#pylab.yticks((0,0.5, 1))
-pylab.plot(LFP_e.times / ms, total_LFP, 'm')
-filename="total_LFP_" + `v_0` + ".eps" 
-pylab.savefig(filename, format='eps')
-
-
-pylab.figure(7)
-#pylab.yticks((0,0.5, 1))
-pylab.plot(LFP_e.times / ms, mean_LFP, 'm')
-filename="mean_LFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
-
-
-pylab.figure(8)
-#pylab.yticks((0,0.5, 1))
-plot(DFP_e.times / ms, total_DFP, 'c')
-filename="total_DFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
-
-pylab.figure(9)
-#pylab.yticks((0,0.5, 1))
-pylab.plot(DFP_e.times / ms, mean_DFP, 'c')
-filename="mean_DFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
-
-
-#f=open("data", "w")
-#numpy.savetxt(f, numpy.array([DFP_e.times, mean_DFP]).T)
-#f.close()
-
-
-#------------------- Ploting Power spectra --------------------- 
+# Compute mean membrane potential
+mean_membrane = np.mean(Membrane.V, axis=0) * 1e3  # Convert from volts to millivolts
 
 dt=0.0001 # 0.1ms = 0.0001 sec
 #nextpow2=32768 # here 2000ms of length
 nextpow2=4096 # only 250ms of length 
 
-pylab.figure(10)
-psd(total_LFP, nextpow2, 1/dt) 
-filename="PowerSpectra_total_LFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
 
-pylab.figure(11)
-psd(mean_LFP, nextpow2, 1/dt) 
-filename="PowerSpectra_mean_LFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
+# Plot Thalamic Rate
+plt.figure(figsize=(8, 6))
+plt.plot(ThalamicRate.times / ms, ThalamicRate[0] / 1000, 'k', label='Thalamic Rate')
+plt.plot(ThalamicRate.times / ms, signal / 1000, 'g', label='Constant Signal')
+plt.xlabel('Time (ms)')
+plt.ylabel('Rate (kHz)')
+plt.title('Thalamic Rate with Constant Signal')
+plt.legend()
+plt.savefig("ThalamicRate.eps", format='eps')
+plt.show()
 
+# Plot Excitatory Raster Plot
+plt.figure(figsize=(8, 6))
+spike_times = Ge_S.t / ms  # Assuming Ge_S contains spike times
+neuron_indices = Ge_S.i
+plt.eventplot(spike_times, colors='black')
+plt.xlabel('Time (ms)')
+plt.ylabel('Neuron Index')
+plt.title('Excitatory Raster Plot')
+plt.savefig("Excitatory_RasterPlot.eps", format='eps')
+plt.show()
 
-pylab.figure(12)
-psd(total_DFP, nextpow2, 1/dt)
-filename="PowerSpectra_total_DFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
+# Plot Excitatory Rate
+plt.figure(figsize=(8, 6))
+plt.plot(rate_e.times / ms, rate_e.rate, 'b')
+plt.xlabel('Time (ms)')
+plt.ylabel('Rate (Hz)')
+plt.title('Excitatory Population Rate')
+plt.savefig("Excitatory_rate.eps", format='eps')
+plt.show()
 
-pylab.figure(13)
-psd(mean_DFP, nextpow2, 1/dt)
-filename="PowerSpectra_mean_DFP_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
+# Plot Inhibitory Rate
+plt.figure(figsize=(8, 6))
+plt.plot(rate_i.times / ms, rate_i.rate, 'r')
+plt.xlabel('Time (ms)')
+plt.ylabel('Rate (Hz)')
+plt.title('Inhibitory Population Rate')
+plt.savefig("Inhibitory_rate.eps", format='eps')
+plt.show()
 
+# Plot Mean Membrane Potential
+plt.figure(figsize=(8, 6))
+plt.plot(Membrane.times / ms, mean_membrane, 'g')
+plt.xlabel('Time (ms)')
+plt.ylabel('Potential (mV)')
+plt.title('Mean Membrane Potential')
+plt.savefig("mean_membrane.eps", format='eps')
+plt.show()
 
-pylab.figure(14)
-psd(mean_membrane, nextpow2, 1/dt)
-filename="PowerSpectra_mean_membrane_" + `v_0` + ".eps"
-pylab.savefig(filename, format='eps')
+# Plot Total LFP
+plt.figure(figsize=(8, 6))
+plt.plot(LFP_e.times / ms, total_LFP, 'm')
+plt.xlabel('Time (ms)')
+plt.ylabel('Total LFP')
+plt.title('Total LFP')
+plt.savefig("total_LFP.eps", format='eps')
+plt.show()
 
-pylab.show()
+# Plot Mean LFP
+plt.figure(figsize=(8, 6))
+plt.plot(LFP_e.times / ms, mean_LFP, 'm')
+plt.xlabel('Time (ms)')
+plt.ylabel('Mean LFP')
+plt.title('Mean LFP')
+plt.savefig("mean_LFP.eps", format='eps')
+plt.show()
+
+# Plot Total DFP
+plt.figure(figsize=(8, 6))
+plt.plot(DFP_e.times / ms, total_DFP, 'c')
+plt.xlabel('Time (ms)')
+plt.ylabel('Total DFP')
+plt.title('Total DFP')
+plt.savefig("total_DFP.eps", format='eps')
+plt.show()
+
+# Plot Mean DFP
+plt.figure(figsize=(8, 6))
+plt.plot(DFP_e.times / ms, mean_DFP, 'c')
+plt.xlabel('Time (ms)')
+plt.ylabel('Mean DFP')
+plt.title('Mean DFP')
+plt.savefig("mean_DFP.eps", format='eps')
+plt.show()
+
+# Plot Power Spectra
+plt.figure(figsize=(8, 6))
+plt.psd(total_LFP, NFFT=4096, Fs=1/dt)
+plt.title('Power Spectra of Total LFP')
+plt.savefig("PowerSpectra_total_LFP.eps", format='eps')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.psd(mean_LFP, NFFT=4096, Fs=1/dt)
+plt.title('Power Spectra of Mean LFP')
+plt.savefig("PowerSpectra_mean_LFP.eps", format='eps')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.psd(total_DFP, NFFT=4096, Fs=1/dt)
+plt.title('Power Spectra of Total DFP')
+plt.savefig("PowerSpectra_total_DFP.eps", format='eps')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.psd(mean_DFP, NFFT=4096, Fs=1/dt)
+plt.title('Power Spectra of Mean DFP')
+plt.savefig("PowerSpectra_mean_DFP.eps", format='eps')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.psd(mean_membrane, NFFT=4096, Fs=1/dt)
+plt.title('Power Spectra of Mean Membrane Potential')
+plt.savefig("PowerSpectra_mean_membrane.eps", format='eps')
+plt.show()
 
 ##### --------------------------END --------------------------------
